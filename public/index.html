@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Radar de Memecoins</title>
+<meta name="color-scheme" content="dark">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230F1E2A'/%3E%3Cpath d='M6 22h4v-5H6zm6 0h4V12h-4zm6 0h4V8h-4z' fill='%23F0B64A'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <h1>Radar</h1>
+    <span class="tag">memecoins na Solana</span>
+  </div>
+  <nav class="tabs" role="tablist" aria-label="Seções">
+    <button role="tab" data-tab="ranking" aria-selected="true">Ranking</button>
+    <button role="tab" data-tab="alerts" aria-selected="false">Alertas</button>
+    <button role="tab" data-tab="calib" aria-selected="false">Calibração</button>
+    <button role="tab" data-tab="settings" aria-selected="false">Ajustes</button>
+  </nav>
+  <div class="pulse" id="pulse" aria-live="polite">
+    <span class="dot" id="pulseDot"></span>
+    <span id="pulseText">Conectando…</span>
+    <button class="ghost" id="runNow" title="Consulta a GMGN agora, sem esperar o próximo ciclo">Rodar agora</button>
+  </div>
+</header>
+
+<div id="banner" class="banner" hidden></div>
+
+<main>
+  <!-- RANKING -->
+  <section id="tab-ranking" class="tab">
+    <form class="filters" id="filters" autocomplete="off">
+      <label>Fase
+        <select name="phase">
+          <option value="">Todas</option>
+          <option value="alerta">Alerta</option>
+          <option value="alerta,candidata">Alerta + candidata</option>
+          <option value="candidata">Candidata</option>
+          <option value="radar">Radar</option>
+        </select>
+      </label>
+      <label>Nota mínima
+        <input name="minScore" type="number" min="0" max="100" placeholder="0" inputmode="numeric">
+      </label>
+      <label>MC mínimo (US$)
+        <input name="mcMin" type="number" min="0" placeholder="0" inputmode="numeric">
+      </label>
+      <label>MC máximo (US$)
+        <input name="mcMax" type="number" min="0" placeholder="150000" inputmode="numeric">
+      </label>
+      <label>Idade máx. (min)
+        <input name="maxAge" type="number" min="0" placeholder="360" inputmode="numeric">
+      </label>
+      <label>Ordenar por
+        <select name="sort">
+          <option value="score">Nota</option>
+          <option value="traction">Tração</option>
+          <option value="smart">Smart money</option>
+          <option value="mc">Market cap</option>
+          <option value="age">Mais novas</option>
+        </select>
+      </label>
+      <label class="check"><input name="smart" type="checkbox" value="1"> Só com smart money</label>
+      <label class="grow">Buscar
+        <input name="q" type="search" placeholder="símbolo, nome ou endereço">
+      </label>
+    </form>
+    <div class="legend">
+      <span>Barras de cada moeda, na ordem: tração, smart money, fluxo, saúde, estágio, social. <i class="sw g"></i>70%+ do máximo <i class="sw y"></i>50% <i class="sw o"></i>30% <i class="sw r"></i>abaixo</span>
+      <span id="count"></span>
+    </div>
+    <div class="split">
+      <div id="list" class="list" role="list"></div>
+      <aside id="detail" class="detail" aria-live="polite" hidden></aside>
+    </div>
+  </section>
+
+  <!-- ALERTAS -->
+  <section id="tab-alerts" class="tab" hidden>
+    <h2>Alertas disparados</h2>
+    <p class="lede">Moedas que chegaram à fase Alerta. O Telegram avisa uma única vez por moeda. A coluna de resultado mostra quanto o market cap andou desde o aviso.</p>
+    <div id="alertList" class="list"></div>
+  </section>
+
+  <!-- CALIBRAÇÃO -->
+  <section id="tab-calib" class="tab" hidden>
+    <h2>Calibração</h2>
+    <p class="lede">Toda moeda que chega a candidata ou alerta é acompanhada por 24 horas. Aqui você vê o que a nota realmente previu, para ajustar filtros e pesos com dados, não com palpite.</p>
+    <div id="calib"></div>
+  </section>
+
+  <!-- AJUSTES -->
+  <section id="tab-settings" class="tab" hidden>
+    <h2>Ajustes</h2>
+    <p class="lede">Os filtros eliminatórios cortam a moeda antes da nota. Mudanças valem já na próxima rodada.</p>
+    <form id="settingsForm" class="settings" autocomplete="off"></form>
+    <div class="actions">
+      <button class="primary" id="saveSettings">Salvar ajustes</button>
+      <button class="ghost" id="resetSettings" type="button">Voltar ao padrão</button>
+      <button class="ghost" id="testTelegram" type="button">Testar Telegram</button>
+      <span id="settingsMsg" class="msg" role="status"></span>
+    </div>
+    <h3>Última rodada: por que moedas foram cortadas</h3>
+    <div id="rejects" class="rejects"></div>
+    <h3>Histórico de rodadas</h3>
+    <div id="runs" class="runs"></div>
+  </section>
+</main>
+
+<footer>A nota mede qualidade e tração com dados da GMGN. Ela não prevê lucro e a maioria das memecoins vai a zero. Nada aqui é recomendação financeira.</footer>
+
+<script src="/app.js" defer></script>
+</body>
+</html>
