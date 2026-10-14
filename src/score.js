@@ -3,7 +3,7 @@
 
 export const DEFAULTS = {
   // --- coleta ---
-  intervalMin: 2, // de quantos em quantos minutos consultar a GMGN
+  intervalMin: 3, // de quantos em quantos minutos consultar a GMGN
   types: ["new_creation", "near_completion", "completed"],
   // --- filtros eliminatórios (reprovou em qualquer um = fora) ---
   maxRug: 0.3,

@@ -1,4 +1,4 @@
-import { loadConfig, saveConfig, ensureSchema } from "./db.js";
+import { loadConfig, saveConfig, ensureSchema, getState } from "./db.js";
 import { DEFAULTS, PILLARS } from "./score.js";
 import { collect } from "./collector.js";
 import { sendTelegram } from "./telegram.js";
@@ -141,8 +141,10 @@ async function status(db, env) {
     .bind(now - 900)
     .first();
   const last = runs[0];
+  const blockedUntil = Number((await getState(db, "blocked_until")) || 0);
   return {
     now,
+    blockedUntil: blockedUntil > now ? blockedUntil : 0,
     setup: {
       gmgn: Boolean(env.GMGN_API_KEY),
       telegram: Boolean(env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID),

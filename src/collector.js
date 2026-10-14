@@ -1,4 +1,4 @@
-import { ensureSchema, loadConfig } from "./db.js";
+import { ensureSchema, loadConfig, getState, setState } from "./db.js";
 import { evaluate } from "./score.js";
 import { getTrenches, getTokenInfo, mcFromInfo } from "./gmgn.js";
 import { buildAlert, sendTelegram } from "./telegram.js";
@@ -34,6 +34,12 @@ export async function collect(env, { force = false } = {}) {
   if (!force) {
     const last = await db.prepare("SELECT ts FROM runs ORDER BY id DESC LIMIT 1").first();
     if (last && now - last.ts < cfg.intervalMin * 60 - 20) return { skipped: true };
+  }
+
+  // Se a GMGN bloqueou este endereço, espera o bloqueio acabar. Insistir prolonga a punição.
+  const blockedUntil = Number((await getState(db, "blocked_until")) || 0);
+  if (blockedUntil > now) {
+    return { ok: false, skipped: true, blocked: true, error: blockedMessage(blockedUntil) };
   }
 
   const t0 = Date.now();
@@ -147,6 +153,15 @@ export async function collect(env, { force = false } = {}) {
   } catch (e) {
     result.ok = false;
     result.error = e.message;
+    if (e.status === 429 || /RATE_LIMIT/.test(e.apiError || "")) {
+      const until = (e.resetAt && e.resetAt > now ? e.resetAt : now + 300) + 15;
+      try {
+        await setState(db, "blocked_until", until);
+      } catch {
+        /* segue sem registrar */
+      }
+      result.error = blockedMessage(until);
+    }
   }
 
   if (notes.length) result.error = [result.error, ...notes].filter(Boolean).join(" | ");
@@ -162,6 +177,15 @@ export async function collect(env, { force = false } = {}) {
     /* sem banco, nada a fazer */
   }
   return result;
+}
+
+export function blockedMessage(until) {
+  const hora = new Date(until * 1000).toLocaleTimeString("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  return `A GMGN bloqueou temporariamente o endereço de rede da Cloudflare por excesso de pedidos. O radar espera sozinho e tenta de novo às ${hora} (Brasília).`;
 }
 
 async function trackOutcomes(env, db, seen, now, notes) {
