@@ -130,7 +130,12 @@ async function loadStatus() {
     if (!s.setup.gmgn) missing.push("a chave da GMGN (<b>GMGN_API_KEY</b>)");
     if (!s.setup.password) missing.push("a senha do painel (<b>DASH_PASSWORD</b>)");
     if (!s.setup.telegram) missing.push("o Telegram (<b>TELEGRAM_BOT_TOKEN</b> e <b>TELEGRAM_CHAT_ID</b>), opcional");
-    if (s.last && !s.last.ok) {
+    if (s.blockedUntil) {
+      const hora = new Date(s.blockedUntil * 1000).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+      b.className = "banner err";
+      b.innerHTML = `<b>A GMGN bloqueou temporariamente o endereço de rede da Cloudflare.</b> O radar espera sozinho e tenta de novo às ${hora}. Não clique em Rodar agora antes disso, porque cada tentativa pode prolongar o bloqueio.`;
+      b.hidden = false;
+    } else if (s.last && !s.last.ok) {
       b.className = "banner err";
       b.innerHTML = `<b>A GMGN não respondeu como esperado.</b> ${esc(s.last.error || "")}`;
       b.hidden = false;
