@@ -1,0 +1,14 @@
+{
+  "name": "gmgn-radar",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --test-scheduled",
+    "deploy": "wrangler deploy",
+    "test": "node test/score.test.js"
+  },
+  "devDependencies": {
+    "wrangler": "^4.45.0"
+  }
+}
