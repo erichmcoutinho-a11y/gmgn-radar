@@ -1,10 +1,12 @@
 import { ensureSchema, loadConfig, getState, setState } from "./db.js";
 import { evaluate } from "./score.js";
-import { getTrenches, getTokenInfo, mcFromInfo } from "./gmgn.js";
 import { buildAlert, sendTelegram } from "./telegram.js";
 
+// A consulta à GMGN é feita pelo GitHub Actions (collector/run.mjs).
+// Aqui o Worker só recebe a lista pronta, dá a nota, grava e avisa.
+
 const MAX_ALERTS_PER_RUN = 5;
-const MAX_INFO_CALLS_PER_RUN = 6;
+const MAX_LIST = 500;
 
 async function runBatches(db, stmts) {
   for (let i = 0; i < stmts.length; i += 50) {
@@ -21,47 +23,98 @@ ON CONFLICT(address) DO UPDATE SET
   score=?7, grade=?8, phase=?9, pillars=?10, flags=?11, metrics=?12,
   peak_score=MAX(peak_score, ?7), mc=?13`;
 
-/**
- * Uma rodada completa: busca a GMGN, avalia, grava, alerta e acompanha resultados.
- * force=true ignora o intervalo configurado (usado pelo botão "Rodar agora").
- */
-export async function collect(env, { force = false } = {}) {
+export function blockedMessage(until) {
+  const hora = new Date(until * 1000).toLocaleTimeString("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  return `A GMGN bloqueou temporariamente o endereço de rede do coletor por excesso de pedidos. O coletor espera sozinho e tenta de novo depois das ${hora} (Brasília).`;
+}
+
+async function pendingOutcomes(db, now) {
+  const rows = await db
+    .prepare("SELECT * FROM outcomes WHERE done=0 AND last_check < ?1 ORDER BY last_check ASC LIMIT 12")
+    .bind(now - 240)
+    .all();
+  return rows.results;
+}
+
+/** O que o coletor precisa saber antes de consultar a GMGN. */
+export async function ingestConfig(env) {
   const db = env.DB;
   await ensureSchema(db);
   const cfg = await loadConfig(db);
   const now = Math.floor(Date.now() / 1000);
-
-  if (!force) {
-    const last = await db.prepare("SELECT ts FROM runs ORDER BY id DESC LIMIT 1").first();
-    if (last && now - last.ts < cfg.intervalMin * 60 - 20) return { skipped: true };
-  }
-
-  // Se a GMGN bloqueou este endereço, espera o bloqueio acabar. Insistir prolonga a punição.
   const blockedUntil = Number((await getState(db, "blocked_until")) || 0);
-  if (blockedUntil > now) {
-    return { ok: false, skipped: true, blocked: true, error: blockedMessage(blockedUntil) };
-  }
+  const pending = (await pendingOutcomes(db, now)).map((o) => o.address);
+  return {
+    now,
+    blockedUntil: blockedUntil > now ? blockedUntil : 0,
+    pending,
+    config: {
+      types: cfg.types,
+      intervalMin: cfg.intervalMin,
+      maxRug: cfg.maxRug,
+      maxBundler: cfg.maxBundler,
+      maxInsider: cfg.maxInsider,
+      maxMc: cfg.maxMc,
+      minLiq: cfg.minLiq,
+    },
+  };
+}
 
+async function logRun(db, now, result) {
+  try {
+    await db
+      .prepare(
+        "INSERT INTO runs(ts,ok,fetched,passed,alerts,ms,error,rejects) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
+      )
+      .bind(now, result.ok ? 1 : 0, result.fetched, result.passed, result.alerts, result.ms ?? 0, result.error, JSON.stringify(result.rejects || {}))
+      .run();
+  } catch {
+    /* sem banco, nada a fazer */
+  }
+}
+
+/**
+ * Recebe do coletor: { list: [...tokens crus da GMGN], mcs: { endereço: marketcap } }
+ * ou { error: { message, status, apiError, resetAt } } quando a GMGN recusou o pedido.
+ */
+export async function ingest(env, payload) {
+  const db = env.DB;
+  await ensureSchema(db);
+  const cfg = await loadConfig(db);
+  const now = Math.floor(Date.now() / 1000);
   const t0 = Date.now();
   const result = { ok: true, fetched: 0, passed: 0, alerts: 0, error: null, rejects: {} };
   const notes = [];
 
+  // O coletor avisou que a GMGN recusou o pedido.
+  if (payload?.error) {
+    const e = payload.error;
+    result.ok = false;
+    result.error = String(e.message || "Erro ao consultar a GMGN").slice(0, 300);
+    if (e.status === 429 || /RATE_LIMIT/.test(e.apiError || "")) {
+      const reset = Number(e.resetAt) || 0;
+      const until = (reset > now ? reset : now + 300) + 15;
+      await setState(db, "blocked_until", until);
+      result.error = blockedMessage(until);
+    }
+    result.ms = Date.now() - t0;
+    await logRun(db, now, result);
+    return result;
+  }
+
   try {
-    const list = await getTrenches(env, cfg.types, {
-      max_rug_ratio: cfg.maxRug,
-      max_bundler_rate: cfg.maxBundler,
-      max_insider_ratio: cfg.maxInsider,
-      max_marketcap: cfg.maxMc,
-      min_liquidity: cfg.minLiq,
-    });
+    const list = Array.isArray(payload?.list) ? payload.list.slice(0, MAX_LIST) : [];
+    const mcs = payload?.mcs && typeof payload.mcs === "object" ? payload.mcs : {};
     const seen = new Map();
-    for (const t of list) if (t?.address && !seen.has(t.address)) seen.set(t.address, t);
+    for (const t of list) if (t && typeof t.address === "string" && !seen.has(t.address)) seen.set(t.address, t);
     result.fetched = seen.size;
 
     const existingRows = await db
-      .prepare(
-        "SELECT address, alerted FROM tokens WHERE last_seen >= ?1",
-      )
+      .prepare("SELECT address, alerted FROM tokens WHERE last_seen >= ?1")
       .bind(now - 3 * 86400)
       .all();
     const existing = new Map(existingRows.results.map((r) => [r.address, r]));
@@ -125,7 +178,7 @@ export async function collect(env, { force = false } = {}) {
 
     // Alertas (uma única vez por token)
     const toAlert = passed
-      .filter((ev) => ev.phase === "alerta" && !(existing.get(ev.address)?.alerted))
+      .filter((ev) => ev.phase === "alerta" && !existing.get(ev.address)?.alerted)
       .sort((a, b) => b.score - a.score);
     const marks = [];
     for (const ev of toAlert) {
@@ -139,8 +192,7 @@ export async function collect(env, { force = false } = {}) {
     }
     if (marks.length) await runBatches(db, marks);
 
-    // Acompanhamento de resultados (base da calibração)
-    await trackOutcomes(env, db, seen, now, notes);
+    await trackOutcomes(db, seen, mcs, now);
 
     // Limpeza uma vez por hora
     if (now % 3600 < cfg.intervalMin * 60 + 60) {
@@ -153,67 +205,30 @@ export async function collect(env, { force = false } = {}) {
   } catch (e) {
     result.ok = false;
     result.error = e.message;
-    if (e.status === 429 || /RATE_LIMIT/.test(e.apiError || "")) {
-      const until = (e.resetAt && e.resetAt > now ? e.resetAt : now + 300) + 15;
-      try {
-        await setState(db, "blocked_until", until);
-      } catch {
-        /* segue sem registrar */
-      }
-      result.error = blockedMessage(until);
-    }
   }
 
   if (notes.length) result.error = [result.error, ...notes].filter(Boolean).join(" | ");
   result.ms = Date.now() - t0;
-  try {
-    await db
-      .prepare(
-        "INSERT INTO runs(ts,ok,fetched,passed,alerts,ms,error,rejects) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
-      )
-      .bind(now, result.ok ? 1 : 0, result.fetched, result.passed, result.alerts, result.ms, result.error, JSON.stringify(result.rejects))
-      .run();
-  } catch {
-    /* sem banco, nada a fazer */
-  }
+  await logRun(db, now, result);
   return result;
 }
 
-export function blockedMessage(until) {
-  const hora = new Date(until * 1000).toLocaleTimeString("pt-BR", {
-    timeZone: "America/Sao_Paulo",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-  return `A GMGN bloqueou temporariamente o endereço de rede da Cloudflare por excesso de pedidos. O radar espera sozinho e tenta de novo às ${hora} (Brasília).`;
-}
-
-async function trackOutcomes(env, db, seen, now, notes) {
-  const pending = await db
-    .prepare("SELECT * FROM outcomes WHERE done=0 AND last_check < ?1 ORDER BY last_check ASC LIMIT 12")
-    .bind(now - 240)
-    .all();
-  let infoCalls = 0;
+// Acompanhamento de resultados (base da calibração).
+async function trackOutcomes(db, seen, mcs, now) {
   const stmts = [];
-  for (const o of pending.results) {
+  for (const o of await pendingOutcomes(db, now)) {
     const elapsed = now - o.entry_ts;
     let mc = null;
     const live = seen.get(o.address);
     if (live) mc = Number(live.usd_market_cap ?? live.market_cap) || null;
-    else if (infoCalls < MAX_INFO_CALLS_PER_RUN) {
-      infoCalls++;
-      try {
-        mc = mcFromInfo(await getTokenInfo(env, o.address));
-      } catch (e) {
-        notes.push(`Acompanhamento: ${e.message}`);
-        if (/RATE_LIMIT|429/.test(e.message)) break;
-      }
-    }
+    else if (Number(mcs[o.address]) > 0) mc = Number(mcs[o.address]);
+    const expired = elapsed > 30 * 3600;
+    if (mc === null && !expired) continue; // sem dado agora: tenta de novo na próxima
     const peak = Math.max(o.peak_mc || 0, mc || 0) || null;
     const m1 = o.mc_1h ?? (mc && elapsed >= 3600 ? mc : null);
     const m6 = o.mc_6h ?? (mc && elapsed >= 6 * 3600 ? mc : null);
     const m24 = o.mc_24h ?? (mc && elapsed >= 24 * 3600 ? mc : null);
-    const done = (m24 !== null && elapsed >= 24 * 3600) || elapsed > 30 * 3600 ? 1 : 0;
+    const done = (m24 !== null && elapsed >= 24 * 3600) || expired ? 1 : 0;
     stmts.push(
       db
         .prepare("UPDATE outcomes SET peak_mc=?2, mc_1h=?3, mc_6h=?4, mc_24h=?5, done=?6, last_check=?7 WHERE address=?1")

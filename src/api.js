@@ -1,6 +1,6 @@
 import { loadConfig, saveConfig, ensureSchema, getState } from "./db.js";
 import { DEFAULTS, PILLARS } from "./score.js";
-import { collect } from "./collector.js";
+import { ingest, ingestConfig } from "./collector.js";
 import { sendTelegram } from "./telegram.js";
 
 const json = (data, status = 200) =>
@@ -146,7 +146,6 @@ async function status(db, env) {
     now,
     blockedUntil: blockedUntil > now ? blockedUntil : 0,
     setup: {
-      gmgn: Boolean(env.GMGN_API_KEY),
       telegram: Boolean(env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID),
       password: Boolean(env.DASH_PASSWORD),
     },
@@ -175,6 +174,10 @@ export async function handleApi(request, env, url) {
   const method = request.method;
   const hasPassword = Boolean(env.DASH_PASSWORD);
 
+  if (method === "GET" && path === "/api/ingest-config") {
+    if (!hasPassword) return json({ error: "Defina o segredo DASH_PASSWORD no Cloudflare." }, 403);
+    return json(await ingestConfig(env));
+  }
   if (method === "GET" && path === "/api/status") return json(await status(db, env));
   if (method === "GET" && path === "/api/tokens") return json({ tokens: await listTokens(db, url.searchParams) });
 
@@ -223,7 +226,11 @@ export async function handleApi(request, env, url) {
       const body = await request.json().catch(() => ({}));
       return json({ config: await saveConfig(db, body) });
     }
-    if (path === "/api/run") return json(await collect(env, { force: true }));
+    if (path === "/api/ingest") {
+      const body = await request.json().catch(() => null);
+      if (!body) return json({ error: "Corpo inválido" }, 400);
+      return json(await ingest(env, body));
+    }
     if (path === "/api/test-telegram") {
       const r = await sendTelegram(env, "✅ Radar conectado. Os alertas vão chegar aqui.");
       return json(r, r.ok ? 200 : 400);

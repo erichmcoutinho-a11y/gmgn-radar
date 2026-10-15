@@ -127,17 +127,25 @@ async function loadStatus() {
     }
     const b = $("#banner");
     const missing = [];
-    if (!s.setup.gmgn) missing.push("a chave da GMGN (<b>GMGN_API_KEY</b>)");
     if (!s.setup.password) missing.push("a senha do painel (<b>DASH_PASSWORD</b>)");
     if (!s.setup.telegram) missing.push("o Telegram (<b>TELEGRAM_BOT_TOKEN</b> e <b>TELEGRAM_CHAT_ID</b>), opcional");
+    const idleMin = s.last ? Math.round((s.now - s.last.ts) / 60) : null;
     if (s.blockedUntil) {
       const hora = new Date(s.blockedUntil * 1000).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
       b.className = "banner err";
-      b.innerHTML = `<b>A GMGN bloqueou temporariamente o endereço de rede da Cloudflare.</b> O radar espera sozinho e tenta de novo às ${hora}. Não clique em Rodar agora antes disso, porque cada tentativa pode prolongar o bloqueio.`;
+      b.innerHTML = `<b>A GMGN bloqueou temporariamente o endereço de rede do coletor.</b> Ele espera sozinho e volta a tentar depois das ${hora}.`;
       b.hidden = false;
     } else if (s.last && !s.last.ok) {
       b.className = "banner err";
       b.innerHTML = `<b>A GMGN não respondeu como esperado.</b> ${esc(s.last.error || "")}`;
+      b.hidden = false;
+    } else if (!s.last) {
+      b.className = "banner";
+      b.innerHTML = "<b>Nenhum dado chegou ainda.</b> Quem consulta a GMGN é o coletor do GitHub (aba Actions do seu repositório). Veja o passo 4 do LEIAME.";
+      b.hidden = false;
+    } else if (idleMin > 15) {
+      b.className = "banner err";
+      b.innerHTML = `<b>O coletor não envia dados há ${idleMin} minutos.</b> Abra a aba Actions do repositório no GitHub e veja se a última execução do Coletor falhou.`;
       b.hidden = false;
     } else if (missing.length) {
       b.className = "banner";
@@ -154,19 +162,10 @@ async function loadStatus() {
 $("#runNow").addEventListener("click", async (e) => {
   const btn = e.currentTarget;
   btn.disabled = true;
-  btn.textContent = "Rodando…";
   try {
-    const r = await api("/api/run", { method: "POST" });
-    if (!r.ok) throw new Error(r.error || "A rodada falhou");
     await Promise.all([loadStatus(), loadTokens()]);
-  } catch (err) {
-    const b = $("#banner");
-    b.className = "banner err";
-    b.innerHTML = `<b>Rodar agora falhou.</b> ${esc(err.message)}`;
-    b.hidden = false;
   } finally {
     btn.disabled = false;
-    btn.textContent = "Rodar agora";
   }
 });
 
@@ -197,7 +196,7 @@ async function loadTokens() {
   }
   $("#count").textContent = tokens.length + (tokens.length === 1 ? " moeda" : " moedas");
   if (!tokens.length) {
-    $("#list").innerHTML = `<div class="empty"><b>Nenhuma moeda passou pelos filtros agora</b>Clique em “Rodar agora” para consultar a GMGN, ou relaxe os filtros em Ajustes. Veja em Ajustes o que está cortando as moedas.</div>`;
+    $("#list").innerHTML = `<div class="empty"><b>Nenhuma moeda passou pelos filtros agora</b>O coletor consulta a GMGN a cada poucos minutos. Se ainda não chegou nada, veja o aviso no topo. Se chegou e tudo foi cortado, veja em Ajustes o que está cortando as moedas e relaxe os filtros.</div>`;
   } else {
     $("#list").innerHTML = tokens.map(rowHtml).join("");
   }

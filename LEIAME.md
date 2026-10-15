@@ -1,68 +1,72 @@
-# Radar de Memecoins (Cloudflare)
+# Radar de Memecoins (Cloudflare + GitHub)
 
-Site que consulta a API da GMGN a cada poucos minutos, corta moedas perigosas, dá nota de 0 a 100 às que sobram, mostra o ranking e avisa no Telegram quando uma moeda chega à fase **Alerta**. Roda inteiro na Cloudflare, sem servidor seu e sem terminal.
+Site que dá nota de 0 a 100 às memecoins novas da Solana, mostra o ranking e avisa no Telegram quando uma moeda chega à fase **Alerta**.
 
-## O que ele faz
+## Como as peças se encaixam
 
-1. **Coleta:** pede à GMGN as moedas novas da Solana (recém-criadas, perto de graduar e já graduadas).
-2. **Filtros eliminatórios:** rug, bundler, insiders, top 10, bots, carteiras novas, dev segurando, phishing, liquidez, market cap, idade, holders e atividade. Reprovou em um, a moeda nem recebe nota.
-3. **Nota (100 pontos):** Tração 25, Smart money 20, Fluxo 15, Saúde 20, Estágio 15, Social 5. A tração compara a moeda com ela mesma minutos atrás (holders, market cap, ritmo de compras), por isso um alerta só sai depois de pelo menos 3 minutos de histórico.
-4. **Fases:** Radar (passou nos filtros), Candidata, Alerta (vai ao Telegram, uma vez por moeda).
-5. **Calibração:** toda candidata ou alerta é acompanhada por 24 horas. A aba Calibração mostra quanto cada faixa de nota e cada pilar realmente acertou, para você ajustar pesos com dados.
+- **GitHub Actions (coletor):** a cada 5 minutos consulta a API da GMGN e envia a lista ao seu site. Foi preciso porque a GMGN bloqueou o endereço de rede compartilhado da Cloudflare.
+- **Cloudflare (site):** recebe a lista, corta moedas perigosas, dá a nota, guarda o histórico, mostra o painel e manda os alertas.
 
 A nota mede qualidade e tração. Ela não prevê lucro, e a maioria das memecoins vai a zero.
 
-## Passo a passo para publicar
+## O que ele faz com cada moeda
 
-### 1. Chave da GMGN
-1. Entre em **https://gmgn.ai/ai** e crie uma API Key. Ele pede uma chave pública: cole o conteúdo do arquivo `chave-publica-gmgn.pem` que veio junto, incluindo as linhas BEGIN e END.
-2. Guarde a **API Key** que a GMGN mostrar. Este site só lê dados, então não precisa de chave privada.
+1. **Filtros eliminatórios:** rug, bundler, insiders, top 10, bots, carteiras novas, dev segurando, phishing, liquidez, market cap, idade, holders e atividade. Reprovou em um, nem recebe nota. Os limites ficam em **Ajustes**.
+2. **Nota (100 pontos):** Tração 25, Smart money 20, Fluxo 15, Saúde 20, Estágio 15, Social 5. A tração compara a moeda com ela mesma minutos atrás, por isso o alerta só sai depois de 3 minutos de histórico.
+3. **Fases:** Radar, Candidata e Alerta (vai ao Telegram, uma vez por moeda).
+4. **Calibração:** toda candidata ou alerta é acompanhada por 24 horas, e a aba Calibração mostra o que a nota realmente previu.
 
-### 2. Colocar o projeto no GitHub
-1. Crie uma conta em github.com (se ainda não tiver) e um repositório **privado** chamado `gmgn-radar`.
-2. Descompacte o `.zip`. No repositório, clique em **Add file → Upload files** e arraste **o conteúdo da pasta** (`src`, `public`, `wrangler.jsonc`, `package.json` e o resto). Clique em **Commit changes**.
+## Passo a passo para colocar o coletor no ar
 
-### 3. Publicar na Cloudflare
-1. Em **dash.cloudflare.com**, vá em **Workers & Pages → Create → Import a repository** e escolha o repositório `gmgn-radar`.
-2. Deixe o nome como `gmgn-radar`, a pasta raiz em branco e clique em **Deploy**. Na primeira publicação a Cloudflare cria o banco de dados (D1) sozinha.
-3. Quando terminar, a Cloudflare mostra o endereço `https://gmgn-radar.SEU-NOME.workers.dev`.
+### 1. Atualizar os arquivos no GitHub
+Em cada passo, clique em **Commit changes** no final.
 
-### 4. Senhas e chaves (segredos)
-No Worker `gmgn-radar`, abra **Settings → Variables and Secrets → Add**, escolha o tipo **Secret** e crie:
+1. Na raiz do repositório: **Add file → Upload files** e envie `wrangler.jsonc` (substitui o antigo).
+2. Entre na pasta `src`, **Add file → Upload files** e envie `index.js`, `api.js` e `collector.js`.
+3. Volte à raiz, entre em `public`, **Add file → Upload files** e envie `app.js` e `index.html`.
+4. Na raiz, **Add file → Create new file**. No nome digite `collector/run.mjs` (a barra cria a pasta). Cole dentro o conteúdo do arquivo `run.mjs`.
+5. Outra vez **Add file → Create new file**, com o nome `.github/workflows/coletor.yml`. Cole o conteúdo do arquivo `coletor.yml`.
+
+A Cloudflare recompila o site sozinha. O arquivo `src/gmgn.js` antigo pode ficar onde está.
+
+### 2. Tornar o repositório público
+**Settings → General → Danger zone → Change visibility → Make public.** Isso é necessário porque repositórios privados têm só 2.000 minutos grátis por mês, e o coletor gasta mais que isso. O que fica visível é o código. As chaves e senhas ficam nos Secrets e não aparecem.
+
+### 3. Guardar as chaves no GitHub
+**Settings → Secrets and variables → Actions → New repository secret.** Crie três:
 
 | Nome | Valor |
 |---|---|
 | `GMGN_API_KEY` | a API Key da GMGN |
-| `DASH_PASSWORD` | uma senha sua para entrar no painel |
-| `TELEGRAM_BOT_TOKEN` | token do bot (opcional, veja abaixo) |
-| `TELEGRAM_CHAT_ID` | número do seu chat (opcional, veja abaixo) |
+| `RADAR_URL` | o endereço do seu site, como `https://gmgn-radar.SEU-NOME.workers.dev`, sem barra no final |
+| `RADAR_PASSWORD` | a mesma senha que está em `DASH_PASSWORD` na Cloudflare |
 
-Salve e faça o deploy de novo se a Cloudflare pedir.
+### 4. Ligar e testar
+1. Aba **Actions** do repositório. Se o GitHub pedir, clique em **I understand my workflows, go ahead and enable them**.
+2. À esquerda escolha **Coletor** e clique em **Run workflow**.
+3. Abra a execução. No log deve aparecer `Enviado: N lidas, N passaram…`.
+4. Abra o painel do site. As moedas aparecem em poucos minutos.
 
-### 5. Telegram (opcional)
-1. No Telegram, converse com **@BotFather**, envie `/newbot` e siga os passos. Ele entrega o **token**.
-2. Abra uma conversa com o seu novo bot e envie qualquer mensagem.
-3. No navegador, abra `https://api.telegram.org/botSEU_TOKEN/getUpdates` e procure `"chat":{"id":` seguido de um número. Esse número é o **chat id**.
-4. No painel, em **Ajustes**, clique em **Testar Telegram**.
-
-### 6. Usar
-Abra o endereço do site. O navegador pede usuário e senha: use qualquer usuário e a senha `DASH_PASSWORD`. Clique em **Rodar agora** para a primeira consulta. Depois disso a Cloudflare consulta sozinha, e o intervalo é ajustável em **Ajustes**.
+Depois disso o GitHub roda sozinho a cada 5 minutos. Cada execução consulta a GMGN 2 vezes (o intervalo é o de **Ajustes**, padrão 3 minutos).
 
 ## Se algo não funcionar
 
-- **Faixa vermelha com erro da GMGN:** o texto do erro aparece no topo do painel. Se falar em chave, confira `GMGN_API_KEY`. A GMGN só aceita conexões IPv4 e a Cloudflare escolhe o caminho de rede sozinha, então se o erro for de conexão ou de IP, me mande o texto.
-- **Deploy reclama do D1 / `database_id`:** em **Storage & Databases → D1 → Create** crie um banco `radar-db`, copie o ID dele e, no GitHub, edite `wrangler.jsonc`, trocando `{ "binding": "DB" }` por `{ "binding": "DB", "database_name": "radar-db", "database_id": "SEU_ID" }`.
-- **Erro de limite de CPU nos logs:** o plano gratuito tem limite apertado por execução. Aumente o intervalo em Ajustes ou use o plano pago da Cloudflare (US$ 5 por mês).
-- **Ranking vazio:** veja em Ajustes a lista de por que as moedas foram cortadas. Se estiver cortando tudo, relaxe os filtros.
+- **Log do GitHub com `HTTP 401`:** `RADAR_PASSWORD` é diferente de `DASH_PASSWORD`. Corrija um dos dois.
+- **Log com `HTTP 403`:** o site não tem o segredo `DASH_PASSWORD` na Cloudflare.
+- **Log com `GMGN HTTP 429` / `RATE_LIMIT_BANNED`:** a GMGN também bloqueou o endereço do GitHub naquela execução. O coletor para e o painel mostra até quando. Se acontecer toda hora, me avise, porque a saída passa a ser um servidor com endereço fixo.
+- **Aviso no painel "O coletor não envia dados há N minutos":** veja a aba Actions. O GitHub atrasa execuções agendadas em horários de pico, e desativa agendamentos de repositórios públicos parados há 60 dias, então abra o repositório de vez em quando.
+- **Ranking vazio com dados chegando:** veja em **Ajustes** a lista do que está cortando as moedas e relaxe os filtros.
+- **Erro de limite de CPU na Cloudflare:** aumente o intervalo em Ajustes ou use o plano pago da Cloudflare.
 
 ## Estrutura
 
 ```
-src/score.js       motor de nota e filtros (edite pesos aqui)
-src/collector.js   rodada de coleta, alertas e acompanhamento
-src/gmgn.js        cliente da API da GMGN
-src/api.js         rotas do painel
-src/telegram.js    formato do alerta
-public/            o painel (HTML, CSS, JS)
-test/              testes do motor (npm test)
+collector/run.mjs                 coletor que roda no GitHub
+.github/workflows/coletor.yml     agenda do coletor (a cada 5 min)
+src/score.js                      motor de nota e filtros (edite pesos aqui)
+src/collector.js                  recebe a lista, grava, alerta e acompanha resultados
+src/api.js                        rotas do painel
+src/telegram.js                   formato do alerta
+public/                           o painel
+test/                             testes do motor (npm test)
 ```

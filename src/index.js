@@ -1,5 +1,4 @@
 import { handleApi } from "./api.js";
-import { collect } from "./collector.js";
 
 function unauthorized() {
   return new Response("Senha necessária", {
@@ -40,9 +39,5 @@ export default {
       }
     }
     return env.ASSETS.fetch(request);
-  },
-
-  async scheduled(event, env, ctx) {
-    ctx.waitUntil(collect(env));
   },
 };
